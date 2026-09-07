@@ -1,9 +1,12 @@
+from decimal import Decimal
+
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.utils import timezone
 
 from .forms import ApplicationForm
 from .models import Application
+from .services import calculate_premium, calculate_premium_with_overrides
 
 
 class ApplicationModelTestCase(TestCase):
@@ -114,7 +117,7 @@ class ApplicationModelTestCase(TestCase):
             self.assertEqual(app.vehicle_type, vehicle_type)
 
     def test_application_ordering_by_created_at_descending(self):
-        app1 = Application.objects.create(
+        Application.objects.create(
             applicant_name="First",
             driver_age=30,
             vehicle_type="sedan",
@@ -122,7 +125,7 @@ class ApplicationModelTestCase(TestCase):
             regional_risk_index=50,
             driving_experience_years=5,
         )
-        app2 = Application.objects.create(
+        Application.objects.create(
             applicant_name="Second",
             driver_age=35,
             vehicle_type="suv",
@@ -411,3 +414,315 @@ class RiskScoringServiceTestCase(TestCase):
             service._extract_features(mock_app)
 
         self.assertIn("Invalid vehicle type", str(context.exception))
+
+
+class PremiumCalculatorTestCase(TestCase):
+    """Test cases for premium calculation functions."""
+
+    # Tests for calculate_premium function
+
+    def test_calculate_premium_with_typical_values(self):
+        """Test calculate_premium with typical risk score and coverage limit."""
+        risk_score = Decimal(50)
+        coverage_limit = Decimal(10000)
+
+        # Formula: 50 * 12 * (10000 / 1000) = 50 * 12 * 10 = 6000
+        premium = calculate_premium(risk_score, coverage_limit)
+
+        self.assertEqual(premium, Decimal("6000.00"))
+        self.assertEqual(premium.as_tuple().exponent, -2)  # Verify 2 decimal places
+
+    def test_calculate_premium_with_minimum_risk_score(self):
+        """Test calculate_premium with minimum risk score (0)."""
+        risk_score = Decimal(0)
+        coverage_limit = Decimal(10000)
+
+        # Formula: 0 * 12 * (10000 / 1000) = 0
+        premium = calculate_premium(risk_score, coverage_limit)
+
+        self.assertEqual(premium, Decimal("0.00"))
+
+    def test_calculate_premium_with_maximum_risk_score(self):
+        """Test calculate_premium with maximum risk score (100)."""
+        risk_score = Decimal(100)
+        coverage_limit = Decimal(10000)
+
+        # Formula: 100 * 12 * (10000 / 1000) = 100 * 12 * 10 = 12000
+        premium = calculate_premium(risk_score, coverage_limit)
+
+        self.assertEqual(premium, Decimal("12000.00"))
+
+    def test_calculate_premium_with_small_coverage_limit(self):
+        """Test calculate_premium with very small coverage limit."""
+        risk_score = Decimal(50)
+        coverage_limit = Decimal(100)
+
+        # Formula: 50 * 12 * (100 / 1000) = 50 * 12 * 0.1 = 60
+        premium = calculate_premium(risk_score, coverage_limit)
+
+        self.assertEqual(premium, Decimal("60.00"))
+
+    def test_calculate_premium_with_decimal_precision(self):
+        """Test calculate_premium maintains decimal precision."""
+        risk_score = Decimal("33.33")
+        coverage_limit = Decimal(7500)
+
+        # Formula: 33.33 * 12 * (7500 / 1000) = 33.33 * 12 * 7.5 = 2999.70
+        premium = calculate_premium(risk_score, coverage_limit)
+
+        self.assertEqual(premium, Decimal("2999.70"))
+
+    def test_calculate_premium_risk_score_below_zero_raises_error(self):
+        """Test calculate_premium raises ValueError when risk_score < 0."""
+        with self.assertRaises(ValueError) as context:
+            calculate_premium(Decimal(-1), Decimal(10000))
+
+        self.assertIn("between 0 and 100", str(context.exception))
+
+    def test_calculate_premium_risk_score_above_100_raises_error(self):
+        """Test calculate_premium raises ValueError when risk_score > 100."""
+        with self.assertRaises(ValueError) as context:
+            calculate_premium(Decimal(101), Decimal(10000))
+
+        self.assertIn("between 0 and 100", str(context.exception))
+
+    def test_calculate_premium_coverage_limit_zero_raises_error(self):
+        """Test calculate_premium raises ValueError when coverage_limit is 0."""
+        with self.assertRaises(ValueError) as context:
+            calculate_premium(Decimal(50), Decimal(0))
+
+        self.assertIn("greater than 0", str(context.exception))
+
+    def test_calculate_premium_coverage_limit_negative_raises_error(self):
+        """Test calculate_premium raises ValueError when coverage_limit < 0."""
+        with self.assertRaises(ValueError) as context:
+            calculate_premium(Decimal(50), Decimal(-1000))
+
+        self.assertIn("greater than 0", str(context.exception))
+
+    def test_calculate_premium_none_risk_score_raises_type_error(self):
+        """Test calculate_premium raises TypeError when risk_score is None."""
+        with self.assertRaises(TypeError) as context:
+            calculate_premium(None, Decimal(10000))
+
+        self.assertIn("cannot be None", str(context.exception))
+
+    def test_calculate_premium_none_coverage_limit_raises_type_error(self):
+        """Test calculate_premium raises TypeError when coverage_limit is None."""
+        with self.assertRaises(TypeError) as context:
+            calculate_premium(Decimal(50), None)
+
+        self.assertIn("cannot be None", str(context.exception))
+
+    def test_calculate_premium_with_float_inputs(self):
+        """Test calculate_premium accepts float inputs and converts to Decimal."""
+        risk_score = 50.0
+        coverage_limit = 10000.0
+
+        # Should work and produce same result as Decimal inputs
+        premium = calculate_premium(risk_score, coverage_limit)
+
+        self.assertEqual(premium, Decimal("6000.00"))
+
+    def test_calculate_premium_with_int_inputs(self):
+        """Test calculate_premium accepts int inputs and converts to Decimal."""
+        risk_score = 50
+        coverage_limit = 10000
+
+        # Should work and produce same result as Decimal inputs
+        premium = calculate_premium(risk_score, coverage_limit)
+
+        self.assertEqual(premium, Decimal("6000.00"))
+
+    # Tests for calculate_premium_with_overrides function
+
+    def test_calculate_premium_with_overrides_typical_values(self):
+        """Test calculate_premium_with_overrides with typical values."""
+        base_premium = Decimal(1000)
+        deductible = Decimal(500)
+        risk_override_pct = Decimal(10)
+
+        # deductible_factor = 1.0 - (500 - 250) / 1750 * 0.15
+        #                   = 1.0 - 250/1750 * 0.15
+        #                   = 1.0 - 0.02142857... = 0.97857142...
+        # override_factor = 1.0 + (10 / 100) = 1.10
+        # result = 1000 * 0.97857142... * 1.10 = 1076.43 (approx)
+
+        premium = calculate_premium_with_overrides(
+            base_premium, deductible, risk_override_pct
+        )
+
+        # More precise calculation using Decimal
+        expected = Decimal("1076.43")
+        self.assertEqual(premium, expected)
+
+    def test_calculate_premium_with_overrides_minimum_deductible(self):
+        """Test calculate_premium_with_overrides with minimum deductible (250)."""
+        base_premium = Decimal(1000)
+        deductible = Decimal(250)
+        risk_override_pct = Decimal(0)
+
+        # deductible_factor = 1.0 - (250 - 250) / 1750 * 0.15 = 1.0 - 0 = 1.0
+        # override_factor = 1.0 + (0 / 100) = 1.0
+        # result = 1000 * 1.0 * 1.0 = 1000
+
+        premium = calculate_premium_with_overrides(
+            base_premium, deductible, risk_override_pct
+        )
+
+        self.assertEqual(premium, Decimal("1000.00"))
+
+    def test_calculate_premium_with_overrides_maximum_deductible(self):
+        """Test calculate_premium_with_overrides with maximum deductible (2000)."""
+        base_premium = Decimal(1000)
+        deductible = Decimal(2000)
+        risk_override_pct = Decimal(0)
+
+        # deductible_factor = 1.0 - (2000 - 250) / 1750 * 0.15
+        #                   = 1.0 - 1750/1750 * 0.15
+        #                   = 1.0 - 0.15 = 0.85
+        # override_factor = 1.0
+        # result = 1000 * 0.85 * 1.0 = 850
+
+        premium = calculate_premium_with_overrides(
+            base_premium, deductible, risk_override_pct
+        )
+
+        self.assertEqual(premium, Decimal("850.00"))
+
+    def test_calculate_premium_with_overrides_minimum_risk_override(self):
+        """Test calculate_premium_with_overrides with minimum risk override (-25)."""
+        base_premium = Decimal(1000)
+        deductible = Decimal(250)
+        risk_override_pct = Decimal(-25)
+
+        # deductible_factor = 1.0
+        # override_factor = 1.0 + (-25 / 100) = 0.75
+        # result = 1000 * 1.0 * 0.75 = 750
+
+        premium = calculate_premium_with_overrides(
+            base_premium, deductible, risk_override_pct
+        )
+
+        self.assertEqual(premium, Decimal("750.00"))
+
+    def test_calculate_premium_with_overrides_maximum_risk_override(self):
+        """Test calculate_premium_with_overrides with maximum risk override (+25)."""
+        base_premium = Decimal(1000)
+        deductible = Decimal(250)
+        risk_override_pct = Decimal(25)
+
+        # deductible_factor = 1.0
+        # override_factor = 1.0 + (25 / 100) = 1.25
+        # result = 1000 * 1.0 * 1.25 = 1250
+
+        premium = calculate_premium_with_overrides(
+            base_premium, deductible, risk_override_pct
+        )
+
+        self.assertEqual(premium, Decimal("1250.00"))
+
+    def test_calculate_premium_with_overrides_negative_risk_override(self):
+        """Test calculate_premium_with_overrides with negative risk override."""
+        base_premium = Decimal(1000)
+        deductible = Decimal(500)
+        risk_override_pct = Decimal(-10)
+
+        # deductible_factor = 1.0 - 250/1750 * 0.15 ≈ 0.97857142...
+        # override_factor = 1.0 + (-10 / 100) = 0.90
+        # result ≈ 1000 * 0.97857142... * 0.90 ≈ 880.71
+
+        premium = calculate_premium_with_overrides(
+            base_premium, deductible, risk_override_pct
+        )
+
+        expected = Decimal("880.71")
+        self.assertEqual(premium, expected)
+
+    def test_calculate_premium_with_overrides_deductible_below_min_raises_error(self):
+        """Test raises ValueError when deductible < 250."""
+        with self.assertRaises(ValueError) as context:
+            calculate_premium_with_overrides(Decimal(1000), Decimal(249), Decimal(0))
+
+        self.assertIn("between 250 and 2000", str(context.exception))
+
+    def test_calculate_premium_with_overrides_deductible_above_max_raises_error(self):
+        """Test raises ValueError when deductible > 2000."""
+        with self.assertRaises(ValueError) as context:
+            calculate_premium_with_overrides(Decimal(1000), Decimal(2001), Decimal(0))
+
+        self.assertIn("between 250 and 2000", str(context.exception))
+
+    def test_calculate_premium_with_overrides_risk_override_below_min_raises_error(
+        self,
+    ):
+        """Test raises ValueError when risk_override_pct < -25."""
+        with self.assertRaises(ValueError) as context:
+            calculate_premium_with_overrides(Decimal(1000), Decimal(500), Decimal(-26))
+
+        self.assertIn("between -25 and 25", str(context.exception))
+
+    def test_calculate_premium_with_overrides_risk_override_above_max_raises_error(
+        self,
+    ):
+        """Test raises ValueError when risk_override_pct > 25."""
+        with self.assertRaises(ValueError) as context:
+            calculate_premium_with_overrides(Decimal(1000), Decimal(500), Decimal(26))
+
+        self.assertIn("between -25 and 25", str(context.exception))
+
+    def test_calculate_premium_with_overrides_none_base_premium_raises_type_error(self):
+        """Test raises TypeError when base_premium is None."""
+        with self.assertRaises(TypeError) as context:
+            calculate_premium_with_overrides(None, Decimal(500), Decimal(0))
+
+        self.assertIn("cannot be None", str(context.exception))
+
+    def test_calculate_premium_with_overrides_none_deductible_raises_type_error(self):
+        """Test raises TypeError when deductible is None."""
+        with self.assertRaises(TypeError) as context:
+            calculate_premium_with_overrides(Decimal(1000), None, Decimal(0))
+
+        self.assertIn("cannot be None", str(context.exception))
+
+    def test_calculate_premium_with_overrides_none_risk_override_raises_type_error(
+        self,
+    ):
+        """Test raises TypeError when risk_override_pct is None."""
+        with self.assertRaises(TypeError) as context:
+            calculate_premium_with_overrides(Decimal(1000), Decimal(500), None)
+
+        self.assertIn("cannot be None", str(context.exception))
+
+    def test_calculate_premium_with_overrides_with_float_inputs(self):
+        """Test calculate_premium_with_overrides accepts float inputs."""
+        base_premium = 1000.0
+        deductible = 500.0
+        risk_override_pct = 10.0
+
+        # Should work with float inputs
+        premium = calculate_premium_with_overrides(
+            base_premium, deductible, risk_override_pct
+        )
+
+        expected = Decimal("1076.43")
+        self.assertEqual(premium, expected)
+
+    def test_calculate_premium_with_overrides_decimal_precision(self):
+        """Test calculate_premium_with_overrides maintains decimal precision."""
+        base_premium = Decimal("1234.56")
+        deductible = Decimal(625)
+        risk_override_pct = Decimal("5.5")
+
+        # Calculate step by step
+        # deductible_factor = 1.0 - (625 - 250) / 1750 * 0.15
+        #                   = 1.0 - (375 / 1750 * 0.15)
+        # override_factor = 1.0 + (5.5 / 100)
+        # result = 1234.56 * deductible_factor * override_factor
+
+        premium = calculate_premium_with_overrides(
+            base_premium, deductible, risk_override_pct
+        )
+
+        # Verify it's properly formatted to 2 decimal places
+        self.assertEqual(premium.as_tuple().exponent, -2)
