@@ -1,5 +1,9 @@
 # InsureHub Agent Guidelines
 
+## Documents
+
+- `_docs/process.md` - how work is organized
+
 ## Commands
 
 ### Setup & Dependencies
