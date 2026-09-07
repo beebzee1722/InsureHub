@@ -2,6 +2,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 from django.utils import timezone
 from .models import Application
+from .forms import ApplicationForm
 
 
 class ApplicationModelTestCase(TestCase):
@@ -146,3 +147,137 @@ class ApplicationModelTestCase(TestCase):
 
     def test_application_verbose_name(self):
         self.assertEqual(Application._meta.verbose_name, 'Application')
+
+
+class ApplicationFormTestCase(TestCase):
+    def test_valid_form_submission(self):
+        data = {
+            'applicant_name': 'John Doe',
+            'driver_age': 35,
+            'vehicle_type': 'sedan',
+            'safety_rating': 4,
+            'regional_risk_index': 50,
+            'driving_experience_years': 10,
+        }
+        form = ApplicationForm(data)
+        self.assertTrue(form.is_valid())
+
+    def test_driver_age_too_young(self):
+        data = {
+            'applicant_name': 'Jane Smith',
+            'driver_age': 17,
+            'vehicle_type': 'sedan',
+            'safety_rating': 3,
+            'regional_risk_index': 50,
+            'driving_experience_years': 0,
+        }
+        form = ApplicationForm(data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('driver_age', form.errors)
+
+    def test_driver_age_too_old(self):
+        data = {
+            'applicant_name': 'Jane Smith',
+            'driver_age': 101,
+            'vehicle_type': 'sedan',
+            'safety_rating': 3,
+            'regional_risk_index': 50,
+            'driving_experience_years': 50,
+        }
+        form = ApplicationForm(data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('driver_age', form.errors)
+
+    def test_safety_rating_too_low(self):
+        data = {
+            'applicant_name': 'Bob Johnson',
+            'driver_age': 30,
+            'vehicle_type': 'sedan',
+            'safety_rating': 0,
+            'regional_risk_index': 50,
+            'driving_experience_years': 8,
+        }
+        form = ApplicationForm(data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('safety_rating', form.errors)
+
+    def test_safety_rating_too_high(self):
+        data = {
+            'applicant_name': 'Bob Johnson',
+            'driver_age': 30,
+            'vehicle_type': 'sedan',
+            'safety_rating': 6,
+            'regional_risk_index': 50,
+            'driving_experience_years': 8,
+        }
+        form = ApplicationForm(data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('safety_rating', form.errors)
+
+    def test_regional_risk_index_too_low(self):
+        data = {
+            'applicant_name': 'Alice Brown',
+            'driver_age': 30,
+            'vehicle_type': 'sedan',
+            'safety_rating': 3,
+            'regional_risk_index': 0,
+            'driving_experience_years': 8,
+        }
+        form = ApplicationForm(data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('regional_risk_index', form.errors)
+
+    def test_regional_risk_index_too_high(self):
+        data = {
+            'applicant_name': 'Alice Brown',
+            'driver_age': 30,
+            'vehicle_type': 'sedan',
+            'safety_rating': 3,
+            'regional_risk_index': 101,
+            'driving_experience_years': 8,
+        }
+        form = ApplicationForm(data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('regional_risk_index', form.errors)
+
+    def test_driving_experience_exceeds_age(self):
+        data = {
+            'applicant_name': 'Young Driver',
+            'driver_age': 25,
+            'vehicle_type': 'sedan',
+            'safety_rating': 3,
+            'regional_risk_index': 50,
+            'driving_experience_years': 10,
+        }
+        form = ApplicationForm(data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('__all__', form.errors)
+
+    def test_driving_experience_at_max_allowed(self):
+        data = {
+            'applicant_name': 'Experienced Driver',
+            'driver_age': 35,
+            'vehicle_type': 'sedan',
+            'safety_rating': 3,
+            'regional_risk_index': 50,
+            'driving_experience_years': 17,
+        }
+        form = ApplicationForm(data)
+        self.assertTrue(form.is_valid())
+
+    def test_form_excludes_calculated_fields(self):
+        data = {
+            'applicant_name': 'Test User',
+            'driver_age': 30,
+            'vehicle_type': 'sedan',
+            'safety_rating': 3,
+            'regional_risk_index': 50,
+            'driving_experience_years': 8,
+        }
+        form = ApplicationForm(data)
+        self.assertTrue(form.is_valid())
+        self.assertNotIn('calculated_risk_score', form.fields)
+        self.assertNotIn('initial_premium', form.fields)
+        self.assertNotIn('final_premium', form.fields)
+        self.assertNotIn('status', form.fields)
+        self.assertNotIn('underwriter_notes', form.fields)
