@@ -874,3 +874,388 @@ class URLResolutionTestCase(TestCase):
 
         resolver = resolve("/applications/new/")
         self.assertEqual(resolver.func.__name__, "application_form_view")
+
+    def test_application_create_url_resolves(self):
+        """Test application create URL resolves to application_create_view."""
+        from django.urls import resolve
+
+        resolver = resolve("/applications/create/")
+        self.assertEqual(resolver.func.__name__, "application_create_view")
+
+    def test_application_confirmation_url_resolves(self):
+        """Test application confirmation URL resolves to application_confirmation_view."""
+        from django.urls import resolve
+
+        resolver = resolve("/applications/1/confirmation/")
+        self.assertEqual(resolver.func.__name__, "application_confirmation_view")
+
+
+class ApplicationCreateViewTestCase(TestCase):
+    """Test cases for application_create_view (POST /applications/create/)."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.form_data = {
+            "applicant_name": "John Doe",
+            "driver_age": 35,
+            "vehicle_type": "sedan",
+            "safety_rating": 4,
+            "regional_risk_index": 50,
+            "driving_experience_years": 10,
+        }
+
+    def test_create_view_with_valid_form_redirects_to_confirmation(self):
+        """Test valid form submission redirects to confirmation page."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/create/", self.form_data)
+
+            # Verify application was created
+            app = Application.objects.first()
+            self.assertIsNotNone(app)
+            self.assertEqual(app.applicant_name, "John Doe")
+
+            # Verify redirect
+            self.assertEqual(response.status_code, 302)
+            self.assertTrue(
+                response.url.endswith(f"/applications/{app.id}/confirmation/")
+            )
+
+    def test_create_view_saves_calculated_risk_score(self):
+        """Test that calculated_risk_score is saved correctly."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 42.5
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            self.assertEqual(app.calculated_risk_score, 42)  # Rounded
+
+    def test_create_view_saves_initial_premium(self):
+        """Test that initial_premium is calculated and saved correctly."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            # Formula: 50 * 12 * (10000 / 1000) = 6000.00
+            self.assertEqual(app.initial_premium, Decimal("6000.00"))
+
+    def test_create_view_approved_status_for_low_risk(self):
+        """Test status is 'approved' when risk score < 20."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 15.0
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            self.assertEqual(app.status, "approved")
+
+    def test_create_view_flagged_status_for_medium_risk(self):
+        """Test status is 'flagged' when 20 <= risk score <= 85."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            self.assertEqual(app.status, "flagged")
+
+    def test_create_view_rejected_status_for_high_risk(self):
+        """Test status is 'rejected' when risk score > 85."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 90.0
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            self.assertEqual(app.status, "rejected")
+
+    def test_create_view_with_invalid_form_returns_200(self):
+        """Test invalid form is re-rendered with errors (HTTP 200)."""
+        invalid_data = self.form_data.copy()
+        invalid_data["driver_age"] = 17  # Too young
+
+        response = self.client.post("/applications/create/", invalid_data)
+
+        # Should return 200 with form errors
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "intake/form.html")
+        self.assertIn("form", response.context)
+        self.assertFalse(response.context["form"].is_valid())
+
+    def test_create_view_missing_required_field_returns_form_with_errors(self):
+        """Test missing required field results in form with errors."""
+        invalid_data = self.form_data.copy()
+        del invalid_data["applicant_name"]
+
+        response = self.client.post("/applications/create/", invalid_data)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "intake/form.html")
+        self.assertIn("applicant_name", response.context["form"].errors)
+
+    def test_create_view_risk_scorer_file_not_found_returns_500(self):
+        """Test missing risk model file returns HTTP 500 with error.html."""
+        from unittest.mock import patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer_class.side_effect = FileNotFoundError(
+                "Risk model file not found"
+            )
+
+            response = self.client.post("/applications/create/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            self.assertTemplateUsed(response, "error.html")
+            self.assertIn("error_message", response.context)
+
+    def test_create_view_risk_scorer_value_error_returns_500(self):
+        """Test ValueError during risk scoring returns HTTP 500."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.side_effect = ValueError("Invalid application data")
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/create/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            self.assertTemplateUsed(response, "error.html")
+
+    def test_create_view_premium_calculation_error_returns_500(self):
+        """Test error during premium calculation returns HTTP 500."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class, patch(
+            "underwriting.views.calculate_premium"
+        ) as mock_calc:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+            mock_calc.side_effect = TypeError("Invalid premium arguments")
+
+            response = self.client.post("/applications/create/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            self.assertTemplateUsed(response, "error.html")
+
+    def test_create_view_database_save_error_returns_500(self):
+        """Test database save error returns HTTP 500."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class, patch.object(
+            Application, "save"
+        ) as mock_save:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+            mock_save.side_effect = Exception("Database error")
+
+            response = self.client.post("/applications/create/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            self.assertTemplateUsed(response, "error.html")
+
+    def test_create_view_non_post_request_redirects(self):
+        """Test GET request redirects to application form."""
+        response = self.client.get("/applications/create/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.endswith("/applications/new/"))
+
+    def test_create_view_with_minimum_risk_score(self):
+        """Test with minimum risk score (0)."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 0.0
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            self.assertEqual(app.calculated_risk_score, 0)
+            self.assertEqual(app.status, "approved")
+
+    def test_create_view_with_maximum_risk_score(self):
+        """Test with maximum risk score (100)."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 100.0
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            self.assertEqual(app.calculated_risk_score, 100)
+            self.assertEqual(app.status, "rejected")
+
+    def test_create_view_with_boundary_risk_score_20(self):
+        """Test with boundary risk score exactly 20 (flagged)."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 20.0
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            self.assertEqual(app.status, "flagged")
+
+    def test_create_view_with_boundary_risk_score_85(self):
+        """Test with boundary risk score exactly 85 (flagged)."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 85.0
+            mock_scorer_class.return_value = mock_scorer
+
+            self.client.post("/applications/create/", self.form_data)
+
+            app = Application.objects.first()
+            self.assertEqual(app.status, "flagged")
+
+
+class ApplicationConfirmationViewTestCase(TestCase):
+    """Test cases for application_confirmation_view."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.application = Application.objects.create(
+            applicant_name="John Doe",
+            driver_age=35,
+            vehicle_type="sedan",
+            safety_rating=4,
+            regional_risk_index=50,
+            driving_experience_years=10,
+            calculated_risk_score=50,
+            initial_premium="6000.00",
+            status="flagged",
+        )
+
+    def test_confirmation_view_returns_200(self):
+        """Test confirmation view returns HTTP 200."""
+        response = self.client.get(f"/applications/{self.application.id}/confirmation/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_confirmation_view_renders_confirmation_template(self):
+        """Test confirmation view renders confirmation.html template."""
+        response = self.client.get(f"/applications/{self.application.id}/confirmation/")
+        self.assertTemplateUsed(response, "confirmation.html")
+
+    def test_confirmation_view_context_has_application(self):
+        """Test confirmation view context contains application object."""
+        response = self.client.get(f"/applications/{self.application.id}/confirmation/")
+        self.assertIn("application", response.context)
+        self.assertEqual(response.context["application"], self.application)
+
+    def test_confirmation_view_displays_applicant_name(self):
+        """Test confirmation page displays applicant name."""
+        response = self.client.get(f"/applications/{self.application.id}/confirmation/")
+        self.assertContains(response, "John Doe")
+
+    def test_confirmation_view_displays_risk_score(self):
+        """Test confirmation page displays calculated risk score."""
+        response = self.client.get(f"/applications/{self.application.id}/confirmation/")
+        self.assertContains(response, "50")
+
+    def test_confirmation_view_displays_premium(self):
+        """Test confirmation page displays initial premium."""
+        response = self.client.get(f"/applications/{self.application.id}/confirmation/")
+        self.assertContains(response, "6000.00")
+
+    def test_confirmation_view_displays_status(self):
+        """Test confirmation page displays application status."""
+        response = self.client.get(f"/applications/{self.application.id}/confirmation/")
+        self.assertContains(response, "Flagged")
+
+    def test_confirmation_view_with_approved_application(self):
+        """Test confirmation page with approved application."""
+        app = Application.objects.create(
+            applicant_name="Jane Smith",
+            driver_age=28,
+            vehicle_type="suv",
+            safety_rating=5,
+            regional_risk_index=30,
+            driving_experience_years=5,
+            calculated_risk_score=15,
+            initial_premium="1800.00",
+            status="approved",
+        )
+
+        response = self.client.get(f"/applications/{app.id}/confirmation/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "approved")
+        self.assertContains(response, "Great news!")
+
+    def test_confirmation_view_with_rejected_application(self):
+        """Test confirmation page with rejected application."""
+        app = Application.objects.create(
+            applicant_name="Bob Johnson",
+            driver_age=25,
+            vehicle_type="truck",
+            safety_rating=1,
+            regional_risk_index=90,
+            driving_experience_years=3,
+            calculated_risk_score=95,
+            initial_premium="11400.00",
+            status="rejected",
+        )
+
+        response = self.client.get(f"/applications/{app.id}/confirmation/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "rejected")
+        self.assertContains(response, "Application Rejected")
+
+    def test_confirmation_view_nonexistent_application_returns_404(self):
+        """Test confirmation view with nonexistent application returns 404."""
+        response = self.client.get("/applications/99999/confirmation/")
+        self.assertEqual(response.status_code, 404)
+        self.assertTemplateUsed(response, "error.html")
+
+    def test_confirmation_view_displays_all_details(self):
+        """Test confirmation page displays all application details."""
+        response = self.client.get(f"/applications/{self.application.id}/confirmation/")
+
+        self.assertContains(response, "John Doe")  # applicant_name
+        self.assertContains(response, "35")  # driver_age
+        self.assertContains(response, "Sedan")  # vehicle_type
+        self.assertContains(response, "4")  # safety_rating
+        self.assertContains(response, "50")  # regional_risk_index or risk_score
+        self.assertContains(response, "10")  # driving_experience_years
