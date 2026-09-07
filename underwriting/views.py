@@ -1,6 +1,12 @@
 from django.shortcuts import render
-from django.http import HttpResponse
+
+from .forms import ApplicationForm
 
 
 def home_view(request):
-    return HttpResponse("Welcome to InsureHub")
+    return render(request, "home.html")
+
+
+def application_form_view(request):
+    form = ApplicationForm()
+    return render(request, "intake/form.html", {"form": form})

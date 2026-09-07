@@ -828,3 +828,49 @@ class STPEngineTestCase(TestCase):
         # Test with a float that has many decimal places
         result = categorize_status(42.123456789)
         self.assertEqual(result, "flagged")
+
+
+class HomeViewTestCase(TestCase):
+    def test_home_view_returns_200(self):
+        """Test home_view returns status 200."""
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_home_view_renders_home_template(self):
+        """Test home_view renders home.html template."""
+        response = self.client.get("/")
+        self.assertTemplateUsed(response, "home.html")
+
+
+class ApplicationFormViewTestCase(TestCase):
+    def test_application_form_view_returns_200(self):
+        """Test application_form_view returns status 200."""
+        response = self.client.get("/applications/new/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_application_form_view_renders_intake_form_template(self):
+        """Test application_form_view renders intake/form.html template."""
+        response = self.client.get("/applications/new/")
+        self.assertTemplateUsed(response, "intake/form.html")
+
+    def test_application_form_view_context_has_form_instance(self):
+        """Test application_form_view context contains ApplicationForm instance."""
+        response = self.client.get("/applications/new/")
+        self.assertIn("form", response.context)
+        self.assertIsInstance(response.context["form"], ApplicationForm)
+
+
+class URLResolutionTestCase(TestCase):
+    def test_home_url_resolves(self):
+        """Test home URL resolves to home_view."""
+        from django.urls import resolve
+
+        resolver = resolve("/")
+        self.assertEqual(resolver.func.__name__, "home_view")
+
+    def test_application_form_url_resolves(self):
+        """Test application form URL resolves to application_form_view."""
+        from django.urls import resolve
+
+        resolver = resolve("/applications/new/")
+        self.assertEqual(resolver.func.__name__, "application_form_view")
