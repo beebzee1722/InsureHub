@@ -1,24 +1,9 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>InsureHub - Error</title>
+{% extends "base.html" %}
+
+{% block title %}InsureHub - Error{% endblock %}
+
+{% block extra_head %}
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f5f5f5;
-            margin: 0;
-            padding: 20px;
-        }
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background-color: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        }
         .error-header {
             text-align: center;
             margin-bottom: 30px;
@@ -28,19 +13,19 @@
             margin-bottom: 10px;
         }
         h1 {
-            color: #721c24;
+            color: #991b1b;
             margin: 10px 0;
         }
         .error-message {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+            background-color: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
             padding: 20px;
             border-radius: 4px;
             margin: 20px 0;
         }
         .error-details {
-            background-color: #f9f9f9;
+            background-color: #f9fafb;
             padding: 15px;
             border-radius: 4px;
             margin: 20px 0;
@@ -51,69 +36,74 @@
         .action-buttons {
             text-align: center;
             margin-top: 30px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
         }
         .btn {
             display: inline-block;
-            padding: 10px 20px;
-            margin: 0 10px;
+            padding: 12px 24px;
             text-decoration: none;
             border-radius: 4px;
-            font-weight: bold;
+            font-weight: 600;
+            transition: background-color 0.3s;
         }
         .btn-primary {
-            background-color: #0066cc;
+            background-color: #2563eb;
             color: white;
         }
         .btn-primary:hover {
-            background-color: #0052a3;
+            background-color: #1d4ed8;
         }
         .btn-secondary {
-            background-color: #e0e0e0;
-            color: #333;
+            background-color: #e5e7eb;
+            color: #1f2937;
         }
         .btn-secondary:hover {
-            background-color: #d0d0d0;
+            background-color: #d1d5db;
         }
         .support-info {
             margin-top: 30px;
             padding: 20px;
-            background-color: #f0f7ff;
-            border-left: 4px solid #0066cc;
+            background-color: #eff6ff;
+            border-left: 4px solid #2563eb;
             border-radius: 4px;
         }
         .support-info h3 {
-            color: #0066cc;
+            color: #2563eb;
             margin-top: 0;
         }
     </style>
-</head>
-<body>
-    <div class="container">
-        <div class="error-header">
-            <div class="error-icon">⚠️</div>
-            <h1>An Error Occurred</h1>
-            <p>We encountered a problem processing your request</p>
-        </div>
+{% endblock %}
 
-        {% if error_message %}
-            <div class="error-message">
-                <strong>Error:</strong> {{ error_message }}
+{% block content %}
+    <div class="max-w-2xl mx-auto">
+        <div class="bg-white rounded-lg shadow-md p-8">
+            <div class="error-header">
+                <div class="error-icon">⚠️</div>
+                <h1>An Error Occurred</h1>
+                <p class="text-gray-600">We encountered a problem processing your request</p>
             </div>
-        {% else %}
-            <div class="error-message">
-                <strong>Error:</strong> An unexpected error occurred. Please try again later.
+
+            {% if error_message %}
+                <div class="error-message">
+                    <strong>Error:</strong> {{ error_message }}
+                </div>
+            {% else %}
+                <div class="error-message">
+                    <strong>Error:</strong> An unexpected error occurred. Please try again later.
+                </div>
+            {% endif %}
+
+            <div class="action-buttons">
+                <a href="{% url 'home' %}" class="btn btn-primary">Back to Home</a>
+                <a href="{% url 'application_form' %}" class="btn btn-secondary">Try Again</a>
             </div>
-        {% endif %}
 
-        <div class="action-buttons">
-            <a href="{% url 'home' %}" class="btn btn-primary">Back to Home</a>
-            <a href="{% url 'application_form' %}" class="btn btn-secondary">Try Again</a>
-        </div>
-
-        <div class="support-info">
-            <h3>Need Help?</h3>
-            <p>If you continue to experience issues, please contact our support team at support@insurehub.com or call 1-800-INSURE-HUB.</p>
+            <div class="support-info">
+                <h3>Need Help?</h3>
+                <p>If you continue to experience issues, please contact our support team at support@insurehub.com or call 1-800-INSURE-HUB.</p>
+            </div>
         </div>
     </div>
-</body>
-</html>
+{% endblock %}
