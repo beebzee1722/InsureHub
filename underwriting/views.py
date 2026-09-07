@@ -115,3 +115,95 @@ def application_confirmation_view(request, application_id):
         )
 
     return render(request, "confirmation.html", {"application": application})
+
+
+def risk_preview_view(request):
+    """Handle POST request to preview risk assessment without saving."""
+    if request.method != "POST":
+        return render(
+            request,
+            "error.html",
+            {"error_message": "Method not allowed"},
+            status=405,
+        )
+
+    form = ApplicationForm(request.POST)
+
+    # Invalid form: return 400 with preview fragment showing form errors
+    if not form.is_valid():
+        return render(
+            request,
+            "partials/risk_preview.html",
+            {"form": form, "has_errors": True},
+            status=400,
+        )
+
+    # Create application instance without saving
+    application = form.save(commit=False)
+
+    # Step 1: Call RiskScoringService.predict()
+    try:
+        scorer = RiskScoringService()
+        risk_score = scorer.predict(application)
+    except FileNotFoundError as e:
+        logger.error(f"Risk model file not found: {e}")
+        return render(
+            request,
+            "partials/risk_preview.html",
+            {"error_message": str(e), "has_errors": True},
+            status=500,
+        )
+    except ValueError as e:
+        logger.error(f"Risk scoring error: {e}")
+        return render(
+            request,
+            "partials/risk_preview.html",
+            {"error_message": "Error calculating risk score", "has_errors": True},
+            status=500,
+        )
+
+    # Step 2: Calculate premium
+    try:
+        initial_premium = calculate_premium(risk_score, DEFAULT_COVERAGE_LIMIT)
+    except (ValueError, TypeError) as e:
+        logger.error(f"Premium calculation error: {e}")
+        return render(
+            request,
+            "partials/risk_preview.html",
+            {"error_message": "Error calculating premium", "has_errors": True},
+            status=500,
+        )
+
+    # Step 3: Categorize status based on risk score
+    try:
+        status = categorize_status(risk_score)
+    except (ValueError, TypeError) as e:
+        logger.error(f"Status categorization error: {e}")
+        return render(
+            request,
+            "partials/risk_preview.html",
+            {
+                "error_message": "Error categorizing application status",
+                "has_errors": True,
+            },
+            status=500,
+        )
+
+    # Set calculated fields on unsaved instance
+    application.calculated_risk_score = round(risk_score)
+    application.initial_premium = initial_premium
+    application.status = status
+
+    # Return preview fragment with calculated values (HTTP 200)
+    return render(
+        request,
+        "partials/risk_preview.html",
+        {
+            "application": application,
+            "risk_score": application.calculated_risk_score,
+            "initial_premium": application.initial_premium,
+            "status": application.status,
+            "has_errors": False,
+        },
+        status=200,
+    )

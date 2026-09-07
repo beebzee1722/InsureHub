@@ -1054,9 +1054,10 @@ class ApplicationCreateViewTestCase(TestCase):
         """Test error during premium calculation returns HTTP 500."""
         from unittest.mock import MagicMock, patch
 
-        with patch("underwriting.views.RiskScoringService") as mock_scorer_class, patch(
-            "underwriting.views.calculate_premium"
-        ) as mock_calc:
+        with (
+            patch("underwriting.views.RiskScoringService") as mock_scorer_class,
+            patch("underwriting.views.calculate_premium") as mock_calc,
+        ):
             mock_scorer = MagicMock()
             mock_scorer.predict.return_value = 50.0
             mock_scorer_class.return_value = mock_scorer
@@ -1071,9 +1072,10 @@ class ApplicationCreateViewTestCase(TestCase):
         """Test database save error returns HTTP 500."""
         from unittest.mock import MagicMock, patch
 
-        with patch("underwriting.views.RiskScoringService") as mock_scorer_class, patch.object(
-            Application, "save"
-        ) as mock_save:
+        with (
+            patch("underwriting.views.RiskScoringService") as mock_scorer_class,
+            patch.object(Application, "save") as mock_save,
+        ):
             mock_scorer = MagicMock()
             mock_scorer.predict.return_value = 50.0
             mock_scorer_class.return_value = mock_scorer
@@ -1259,3 +1261,366 @@ class ApplicationConfirmationViewTestCase(TestCase):
         self.assertContains(response, "4")  # safety_rating
         self.assertContains(response, "50")  # regional_risk_index or risk_score
         self.assertContains(response, "10")  # driving_experience_years
+
+
+class RiskPreviewViewTestCase(TestCase):
+    """Test cases for risk_preview_view (POST /applications/preview/)."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.form_data = {
+            "applicant_name": "John Doe",
+            "driver_age": 35,
+            "vehicle_type": "sedan",
+            "safety_rating": 4,
+            "regional_risk_index": 50,
+            "driving_experience_years": 10,
+        }
+
+    def test_risk_preview_url_resolves(self):
+        """Test risk preview URL resolves to risk_preview_view."""
+        from django.urls import resolve
+
+        resolver = resolve("/applications/preview/")
+        self.assertEqual(resolver.func.__name__, "risk_preview_view")
+
+    def test_risk_preview_with_valid_form_returns_200(self):
+        """Test valid form submission returns HTTP 200 with preview."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            # Should return 200 with preview fragment
+            self.assertEqual(response.status_code, 200)
+            self.assertTemplateUsed(response, "partials/risk_preview.html")
+
+    def test_risk_preview_no_database_save_on_valid_form(self):
+        """Test that valid form does NOT save to database."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            initial_count = Application.objects.count()
+            self.client.post("/applications/preview/", self.form_data)
+            final_count = Application.objects.count()
+
+            # Verify no application was created
+            self.assertEqual(initial_count, final_count)
+
+    def test_risk_preview_displays_risk_score_in_response(self):
+        """Test that preview response displays risk score."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            # Response should contain risk score (rounded to 50)
+            self.assertContains(response, "50")
+
+    def test_risk_preview_displays_premium_in_response(self):
+        """Test that preview response displays calculated premium."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            # Premium for risk_score=50, coverage=10000:
+            # 50 * 12 * (10000 / 1000) = 50 * 12 * 10 = 6000
+            self.assertContains(response, "6000.00")
+
+    def test_risk_preview_approved_status_for_low_risk(self):
+        """Test preview shows 'Approved' status when risk < 20."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 15.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Approved")
+
+    def test_risk_preview_flagged_status_for_medium_risk(self):
+        """Test preview shows 'Flagged' status when 20 <= risk <= 85."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Flagged")
+
+    def test_risk_preview_rejected_status_for_high_risk(self):
+        """Test preview shows 'Rejected' status when risk > 85."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 90.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Rejected")
+
+    def test_risk_preview_with_invalid_form_returns_400(self):
+        """Test invalid form submission returns HTTP 400 with errors."""
+        invalid_data = self.form_data.copy()
+        invalid_data["driver_age"] = 17  # Too young
+
+        response = self.client.post("/applications/preview/", invalid_data)
+
+        # Should return 400 with preview fragment
+        self.assertEqual(response.status_code, 400)
+        self.assertTemplateUsed(response, "partials/risk_preview.html")
+
+    def test_risk_preview_invalid_form_displays_error_message(self):
+        """Test invalid form displays error message in preview."""
+        invalid_data = self.form_data.copy()
+        invalid_data["driver_age"] = 17  # Too young
+
+        response = self.client.post("/applications/preview/", invalid_data)
+
+        # Response should contain error indication
+        self.assertContains(response, "error", status_code=400)
+
+    def test_risk_preview_missing_required_field_returns_400(self):
+        """Test missing required field returns HTTP 400."""
+        invalid_data = self.form_data.copy()
+        del invalid_data["applicant_name"]
+
+        response = self.client.post("/applications/preview/", invalid_data)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTemplateUsed(response, "partials/risk_preview.html")
+
+    def test_risk_preview_risk_scorer_file_not_found_returns_500(self):
+        """Test missing risk model file returns HTTP 500."""
+        from unittest.mock import patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer_class.side_effect = FileNotFoundError(
+                "Risk model file not found"
+            )
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            self.assertTemplateUsed(response, "partials/risk_preview.html")
+
+    def test_risk_preview_risk_scorer_value_error_returns_500(self):
+        """Test ValueError during risk scoring returns HTTP 500."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.side_effect = ValueError("Invalid application data")
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            self.assertTemplateUsed(response, "partials/risk_preview.html")
+
+    def test_risk_preview_premium_calculation_error_returns_500(self):
+        """Test error during premium calculation returns HTTP 500."""
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("underwriting.views.RiskScoringService") as mock_scorer_class,
+            patch("underwriting.views.calculate_premium") as mock_calc,
+        ):
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+            mock_calc.side_effect = TypeError("Invalid premium arguments")
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            self.assertTemplateUsed(response, "partials/risk_preview.html")
+
+    def test_risk_preview_status_categorization_error_returns_500(self):
+        """Test error during status categorization returns HTTP 500."""
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("underwriting.views.RiskScoringService") as mock_scorer_class,
+            patch("underwriting.views.categorize_status") as mock_cat,
+        ):
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+            mock_cat.side_effect = ValueError("Invalid status")
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            self.assertTemplateUsed(response, "partials/risk_preview.html")
+
+    def test_risk_preview_response_is_fragment_not_full_page(self):
+        """Test that response is an HTML fragment, not a full page."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            # Fragment should not contain full HTML structure
+            content = response.content.decode()
+            self.assertNotIn("<!DOCTYPE html>", content)
+            self.assertNotIn("<html", content)
+            self.assertNotIn("</body>", content)
+
+    def test_risk_preview_non_post_request_returns_405(self):
+        """Test GET request returns HTTP 405."""
+        response = self.client.get("/applications/preview/")
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_risk_preview_with_boundary_risk_score_20(self):
+        """Test preview with boundary risk score 20 (flagged)."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 20.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Flagged")
+
+    def test_risk_preview_with_boundary_risk_score_85(self):
+        """Test preview with boundary risk score 85 (flagged)."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 85.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Flagged")
+
+    def test_risk_preview_with_minimum_risk_score(self):
+        """Test preview with minimum risk score 0."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 0.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "0")  # Risk score
+            self.assertContains(response, "Approved")
+
+    def test_risk_preview_with_maximum_risk_score(self):
+        """Test preview with maximum risk score 100."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 100.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "100")  # Risk score
+            self.assertContains(response, "Rejected")
+
+    def test_risk_preview_decimal_risk_score_rounded(self):
+        """Test that decimal risk scores are properly rounded."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 42.7  # Should round to 43
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "43")  # Rounded risk score
+
+    def test_risk_preview_premium_formatted_as_currency(self):
+        """Test that premium is formatted as currency."""
+        from unittest.mock import MagicMock, patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            # Premium should include £ symbol and be formatted
+            self.assertContains(response, "£")
+            self.assertContains(response, ".00")
+
+    def test_risk_preview_error_message_displayed_for_scoring_error(self):
+        """Test error message is displayed when risk scoring fails."""
+        from unittest.mock import patch
+
+        with patch("underwriting.views.RiskScoringService") as mock_scorer_class:
+            mock_scorer_class.side_effect = FileNotFoundError(
+                "models/risk_model.pkl not found"
+            )
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            # Response should contain error indication
+            self.assertContains(response, "error", status_code=500)
+
+    def test_risk_preview_error_message_displayed_for_premium_error(self):
+        """Test error message is displayed when premium calculation fails."""
+        from unittest.mock import MagicMock, patch
+
+        with (
+            patch("underwriting.views.RiskScoringService") as mock_scorer_class,
+            patch("underwriting.views.calculate_premium") as mock_calc,
+        ):
+            mock_scorer = MagicMock()
+            mock_scorer.predict.return_value = 50.0
+            mock_scorer_class.return_value = mock_scorer
+            mock_calc.side_effect = ValueError("Coverage limit invalid")
+
+            response = self.client.post("/applications/preview/", self.form_data)
+
+            self.assertEqual(response.status_code, 500)
+            # Response should contain error indication
+            self.assertContains(response, "error", status_code=500)
