@@ -162,15 +162,15 @@
 
             {% if application.status == "approved" %}
                 <div class="message-box message-approved">
-                    <strong>Great news!</strong> Your application has been approved. Your policy is ready to activate. Please review the details below and contact support if you have any questions.
+                    <strong>Great news! Congratulations!</strong> Your application has been approved. Your premium is £{{ application.initial_premium|floatformat:2 }}/month. <strong>Next steps:</strong> <a href="#" style="color: inherit; text-decoration: underline;">Download Policy</a>
                 </div>
             {% elif application.status == "flagged" %}
                 <div class="message-box message-flagged">
-                    <strong>Under Review</strong> Your application requires manual review by our underwriting team. We'll notify you within 2-3 business days with a final decision.
+                    <strong>Under Review</strong> Your application is under review by our underwriting team. Decision timeline: 24 hours. Check email for updates.
                 </div>
             {% elif application.status == "rejected" %}
                 <div class="message-box message-rejected">
-                    <strong>Application Rejected</strong> Unfortunately, your application does not meet our underwriting criteria at this time. Please contact our support team if you'd like to discuss this decision.
+                    <strong>Application Rejected.</strong> Unfortunately, your application does not meet our criteria. <a href="/admin/" style="color: inherit; text-decoration: underline;">Contact Support</a>
                 </div>
             {% endif %}
 
