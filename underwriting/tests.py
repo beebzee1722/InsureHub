@@ -6,7 +6,11 @@ from django.utils import timezone
 
 from .forms import ApplicationForm
 from .models import Application
-from .services import calculate_premium, calculate_premium_with_overrides
+from .services import (
+    calculate_premium,
+    calculate_premium_with_overrides,
+    categorize_status,
+)
 
 
 class ApplicationModelTestCase(TestCase):
@@ -726,3 +730,101 @@ class PremiumCalculatorTestCase(TestCase):
 
         # Verify it's properly formatted to 2 decimal places
         self.assertEqual(premium.as_tuple().exponent, -2)
+
+
+class STPEngineTestCase(TestCase):
+    """Test cases for the STP Engine categorize_status function."""
+
+    # Approved band tests (risk_score < 20)
+    def test_categorize_status_approved_minimum(self):
+        """Test categorize_status returns 'approved' for minimum score (0.0)."""
+        result = categorize_status(0.0)
+        self.assertEqual(result, "approved")
+
+    def test_categorize_status_approved_near_boundary(self):
+        """Test categorize_status returns 'approved' for score near boundary (19.99)."""
+        result = categorize_status(19.99)
+        self.assertEqual(result, "approved")
+
+    def test_categorize_status_approved_mid_range(self):
+        """Test categorize_status returns 'approved' for mid-range score (10.0)."""
+        result = categorize_status(10.0)
+        self.assertEqual(result, "approved")
+
+    # Flagged band tests (20 <= risk_score <= 85)
+    def test_categorize_status_flagged_at_lower_boundary(self):
+        """Test categorize_status returns 'flagged' at lower boundary (20.0)."""
+        result = categorize_status(20.0)
+        self.assertEqual(result, "flagged")
+
+    def test_categorize_status_flagged_just_above_lower_boundary(self):
+        """Test categorize_status returns 'flagged' just above lower boundary (20.01)."""
+        result = categorize_status(20.01)
+        self.assertEqual(result, "flagged")
+
+    def test_categorize_status_flagged_mid_range(self):
+        """Test categorize_status returns 'flagged' for mid-range score (50.0)."""
+        result = categorize_status(50.0)
+        self.assertEqual(result, "flagged")
+
+    def test_categorize_status_flagged_at_upper_boundary(self):
+        """Test categorize_status returns 'flagged' at upper boundary (85.0)."""
+        result = categorize_status(85.0)
+        self.assertEqual(result, "flagged")
+
+    def test_categorize_status_flagged_just_below_upper_boundary(self):
+        """Test categorize_status returns 'flagged' just below upper boundary (84.99)."""
+        result = categorize_status(84.99)
+        self.assertEqual(result, "flagged")
+
+    # Rejected band tests (risk_score > 85)
+    def test_categorize_status_rejected_just_above_boundary(self):
+        """Test categorize_status returns 'rejected' just above boundary (85.01)."""
+        result = categorize_status(85.01)
+        self.assertEqual(result, "rejected")
+
+    def test_categorize_status_rejected_mid_range(self):
+        """Test categorize_status returns 'rejected' for mid-range score (90.0)."""
+        result = categorize_status(90.0)
+        self.assertEqual(result, "rejected")
+
+    def test_categorize_status_rejected_maximum(self):
+        """Test categorize_status returns 'rejected' for maximum score (100.0)."""
+        result = categorize_status(100.0)
+        self.assertEqual(result, "rejected")
+
+    # Edge cases and error handling
+    def test_categorize_status_negative_risk_score_raises_error(self):
+        """Test categorize_status raises ValueError for negative risk score."""
+        with self.assertRaises(ValueError) as context:
+            categorize_status(-1.0)
+        self.assertIn("between 0 and 100", str(context.exception))
+
+    def test_categorize_status_risk_score_above_100_raises_error(self):
+        """Test categorize_status raises ValueError for risk score > 100."""
+        with self.assertRaises(ValueError) as context:
+            categorize_status(101.0)
+        self.assertIn("between 0 and 100", str(context.exception))
+
+    def test_categorize_status_invalid_type_string_raises_error(self):
+        """Test categorize_status raises TypeError for string input."""
+        with self.assertRaises(TypeError) as context:
+            categorize_status("50")
+        self.assertIn("must be a float", str(context.exception))
+
+    def test_categorize_status_invalid_type_none_raises_error(self):
+        """Test categorize_status raises TypeError for None input."""
+        with self.assertRaises(TypeError) as context:
+            categorize_status(None)
+        self.assertIn("must be a float", str(context.exception))
+
+    def test_categorize_status_int_input_accepted(self):
+        """Test categorize_status accepts int input (should be converted to float)."""
+        result = categorize_status(50)
+        self.assertEqual(result, "flagged")
+
+    def test_categorize_status_with_float_precision(self):
+        """Test categorize_status handles float precision correctly."""
+        # Test with a float that has many decimal places
+        result = categorize_status(42.123456789)
+        self.assertEqual(result, "flagged")
